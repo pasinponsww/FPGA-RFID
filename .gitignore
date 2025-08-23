@@ -1,0 +1,5 @@
+# Ignore the entire impl folder
+impl/
+# Ignore constraint folder
+FPGA-RFID/
+

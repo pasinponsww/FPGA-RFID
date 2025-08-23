@@ -1,82 +1,98 @@
-# ESP32 ↔ FPGA UART (Verilog-only) Package
+# ESP32 ↔ FPGA UART (SystemVerilog Package)
 
 **Author:** Pasinpon (Bex) Sawetrattanathumrong  
-**License:** MIT License © 2025 Bex Sawetrattanathumrong
+**License:** MIT License © 2025 Bex Sawetrattanathumrong  
 
-This package contains everything required on the **FPGA side** to communicate over a simple, reliable UART protocol with an ESP32.
+This repository contains the **FPGA-side SystemVerilog modules** required to communicate with an ESP32 over a reliable UART protocol. It includes a top-level design and all supporting modules.  
 
 ---
 
 ## Protocol
 
-Frame format:  
+**Frame format:**  
 [0xAA][TYPE][LEN][PAYLOAD...][CHK]
 
 Where:  
 - `CHK = (TYPE + LEN + ΣPAYLOAD) mod 256`
 
-**Frame Types:**  
-- `TYPE = 0x10` — UID (ESP32 → FPGA), `LEN = 4`, payload = UID **MSB first**  
-- `TYPE = 0x21` — Auth result (FPGA → ESP32), `LEN = 1`, payload = `0x01` (grant) or `0x00` (deny)  
+**Defined Frame Types:**  
+- `0x10` — UID (ESP32 → FPGA)  
+  - `LEN = 4`  
+  - Payload = UID (MSB first)  
+- `0x21` — Authentication result (FPGA → ESP32)  
+  - `LEN = 1`  
+  - Payload = `0x01` (grant) or `0x00` (deny)  
+
+**Startup behavior:**  
+- On reset, FPGA waits for a **UART BREAK** (TX held low).  
+- Once detected, FPGA replies with a raw `0x52` (`'R'` = READY).  
 
 ---
 
 ## Modules
 
-- `uart_baud_gen.v` — Generates baud-rate ticks (bit and 16× oversample)  
-- `uart_rx.v` — 8N1 UART receiver (16× oversampling)  
-- `uart_tx.v` — 8N1 UART transmitter  
-- `proto_rx.v` — Parses incoming packets  
-- `tx_frame.v` — Constructs and sends packets  
-- `auth_lut.v` — Simple allow-list for authorized UIDs (edit parameters to set your list)  
-- `fpga_top.v` — Top-level integration; set `CLK_FREQ_HZ` to your board’s frequency  
+- **`uart_baud_gen.sv`** — Baud-rate tick generator (bit + 16× oversample)  
+- **`uart_rx.sv`** — UART receiver (8N1, 16× oversampling)  
+- **`uart_tx.sv`** — UART transmitter (8N1)  
+- **`proto_rx.sv`** — Packet/frame parser  
+- **`tx_frame.sv`** — Frame builder and transmitter  
+- **`auth_lut.sv`** — Authentication lookup table for UID allow-list (edit params)  
+- **`fpga_top.sv`** — Top-level design  
+  - Parameters: `CLK_FREQ_HZ`, `BAUD`, `BREAK_BITS`, `STARTUP_QUIET_MS`  
+  - Handles BREAK detection, READY byte, and auth responses  
 
 ---
 
 ## Pinout / Constraints
 
-Edit one of the included constraint files for your board:  
+Use the included example constraint files for your board:  
 - **Gowin:** `constraints/tang_nano_example.cst`  
 - **Xilinx:** `constraints/generic_xdc_example.xdc`  
 
-I/O Standard: **LVCMOS33** for UART TX/RX and LEDs
-
 **Connections:**  
-ESP32.TX → FPGA.uart_rx
-ESP32.RX ← FPGA.uart_tx
+
+ESP32 TX → FPGA uart_rx
+ESP32 RX ← FPGA uart_tx
 GND ↔ GND
+
+
+Electrical:  
+- IO Standard = **LVCMOS33**  
+- No pull resistors required  
 
 ---
 
 ## Quick Start
 
-1. Add all `src/*.v` files and your chosen constraint file to your FPGA project.  
-2. Set `CLK_FREQ_HZ` in `fpga_top.v` (default: 50 MHz).  
-3. (Optional) Edit `auth_lut.v` to add your allowed UIDs.  
-4. Build and program the FPGA.  
-5. On ESP32, send a UID frame — FPGA LEDs will indicate **allow/deny** and respond with `TYPE = 0x21`.  
+1. Add all `*.sv` files and a constraint file to your FPGA project.  
+2. Set your board’s clock frequency in `fpga_top.sv` (`CLK_FREQ_HZ`).  
+3. (Optional) Edit `auth_lut.sv` to define allowed UIDs.  
+4. Build + program the FPGA.  
+5. On ESP32:  
+   - Hold TX low briefly (BREAK) → FPGA responds with `0x52 (R)`  
+   - Send a UID frame → FPGA replies with auth result frame.  
 
 ---
 
 ## Timing
 
-- **Default baud rate:** 115200 (change in `fpga_top.v` if needed)  
-- **Oversampling:** 16× in RX for improved reliability  
+- **Baud rate:** 115200 (default, configurable)  
+- **RX oversampling:** 16×  
+- **BREAK length:** Configurable via `BREAK_BITS` (default: 12 bit-times)  
 
 ---
 
 ## Notes
 
-- UART idles **high** — ensure ESP32 UART is **not inverted**.  
-- Keep wires short and ensure a **common ground**.  
-- If your board uses a non-50 MHz clock (e.g., 27 MHz), update `CLK_FREQ_HZ`.  
+- UART idles **high** — ESP32 UART must be **non-inverted**.  
+- Ensure **common ground** between FPGA and ESP32.  
+- Update `CLK_FREQ_HZ` if your FPGA clock ≠ 50 MHz (e.g., 27 MHz Tang Nano).  
 
 ---
 
 ## License
 
-MIT License  
-Copyright © 2025 Bex Sawetrattanathumrong
+MIT License © 2025 Bex Sawetrattanathumrong  
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the “Software”), to deal

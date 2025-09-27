@@ -1,0 +1,4 @@
+IO_LOC "uart_rx" 68;
+IO_LOC "uart_tx" 69;
+IO_LOC "clk"    20;
+IO_LOC "rst_n"  21;

@@ -1,63 +1,49 @@
 // uart_tx.v
-// Simple 8N1 UART transmitter.
-// Use baud 'tick_bit' (one pulse per bit). LSB first. Idle high.
-`timescale 1ns/1ps
-module uart_tx(
-    input  wire clk,
-    input  wire rst,
-    input  wire [7:0] data_in,
-    input  wire       data_strobe, // pulse to start sending data_in
-    input  wire       tick_bit,    // 1 pulse per bit time from baud gen
-    output reg        tx,          // serial out
-    output reg        busy
+// -----------------------------------------------------------------------------
+// Simple UART transmitter (8N1).
+// -----------------------------------------------------------------------------
+
+module uart_tx (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       tx_start,
+    input  wire [7:0] tx_data,
+    output reg        tx,
+    output reg        tx_busy
 );
-    localparam [2:0] T_IDLE = 3'd0,
-                     T_START= 3'd1,
-                     T_BITS = 3'd2,
-                     T_STOP = 3'd3;
 
-    reg [2:0] state;
-    reg [2:0] bit_idx;
-    reg [7:0] shifter;
+    parameter BAUD_DIV = 5208; // for 9600 baud @ 50 MHz
 
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            state <= T_IDLE;
-            tx <= 1'b1; // idle high
-            busy <= 1'b0;
-            bit_idx <= 3'd0;
-            shifter <= 8'd0;
+    reg [12:0] baud_cnt;
+    reg [3:0]  bit_idx;
+    reg [9:0]  shift_reg;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            tx       <= 1'b1;
+            tx_busy  <= 1'b0;
+            baud_cnt <= 0;
+            bit_idx  <= 0;
+            shift_reg<= 0;
         end else begin
-            if (state == T_IDLE) begin
-                if (data_strobe) begin
-                    busy <= 1'b1;
-                    shifter <= data_in;
-                    bit_idx <= 3'd0;
-                    state <= T_START;
-                    tx <= 1'b0; // start bit
+            if (tx_start && !tx_busy) begin
+                // load start(0), data, stop(1)
+                shift_reg <= {1'b1, tx_data, 1'b0};
+                tx_busy   <= 1'b1;
+                baud_cnt  <= 0;
+                bit_idx   <= 0;
+            end else if (tx_busy) begin
+                if (baud_cnt == BAUD_DIV-1) begin
+                    baud_cnt <= 0;
+                    tx       <= shift_reg[bit_idx];
+                    bit_idx  <= bit_idx + 1;
+                    if (bit_idx == 9) begin
+                        tx_busy <= 1'b0;
+                        tx      <= 1'b1;
+                    end
+                end else begin
+                    baud_cnt <= baud_cnt + 1;
                 end
-            end else if (tick_bit) begin
-                case (state)
-                    T_START: begin
-                        state <= T_BITS;
-                        tx <= shifter[0];
-                    end
-                    T_BITS: begin
-                        shifter <= {1'b0, shifter[7:1]};
-                        if (bit_idx == 3'd7) begin
-                            state <= T_STOP;
-                            tx <= 1'b1; // stop bit
-                        end else begin
-                            bit_idx <= bit_idx + 1'b1;
-                            tx <= shifter[1];
-                        end
-                    end
-                    T_STOP: begin
-                        state <= T_IDLE;
-                        busy <= 1'b0;
-                        tx <= 1'b1; // idle
-                    end
-                endcase
             end
         end
     end

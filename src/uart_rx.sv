@@ -1,95 +1,51 @@
 // uart_rx.v
-// Simple 8N1 UART receiver with 16x oversampling.
-// Idle high. LSB-first. Produces 1-cycle data_valid pulse with data_out.
-`timescale 1ns/1ps
-module uart_rx #(
-    parameter integer OVERSAMPLE = 16
-)(
-    input  wire clk,
-    input  wire rst,
-    input  wire rx,            // serial input (idle high)
-    input  wire tick_x16,      // oversampling tick from baud gen
-    output reg  [7:0] data_out,
-    output reg         data_valid,
-    output reg         framing_err
+// -----------------------------------------------------------------------------
+// Simple UART receiver (8N1).
+// -----------------------------------------------------------------------------
+
+module uart_rx (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       rx,
+    output reg [7:0]  rx_data,
+    output reg        rx_ready
 );
-    localparam [2:0] S_IDLE  = 3'd0,
-                     S_START = 3'd1,
-                     S_DATA  = 3'd2,
-                     S_STOP  = 3'd3;
 
-    reg [2:0] state;
-    reg [3:0] sample_cnt; // 0..15
-    reg [2:0] bit_idx;    // 0..7
-    reg [7:0] shifter;
-    reg       rx_sync1, rx_sync2;
+    parameter BAUD_DIV = 5208; // for 9600 baud @ 50 MHz
 
-    // Double-flop synchronize
-    always @(posedge clk) begin
-        rx_sync1 <= rx;
-        rx_sync2 <= rx_sync1;
-    end
+    reg [12:0] baud_cnt;
+    reg [3:0]  bit_idx;
+    reg [7:0]  shift_reg;
+    reg        busy;
 
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            state <= S_IDLE;
-            sample_cnt <= 4'd0;
-            bit_idx <= 3'd0;
-            shifter <= 8'd0;
-            data_out <= 8'd0;
-            data_valid <= 1'b0;
-            framing_err <= 1'b0;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            baud_cnt <= 0;
+            bit_idx  <= 0;
+            busy     <= 0;
+            rx_ready <= 0;
+            rx_data  <= 0;
         end else begin
-            data_valid <= 1'b0;
-            framing_err <= 1'b0;
-            if (tick_x16) begin
-                case (state)
-                    S_IDLE: begin
-                        if (~rx_sync2) begin // start bit detected (line went low)
-                            state <= S_START;
-                            sample_cnt <= 4'd0;
-                        end
+            rx_ready <= 0;
+            if (!busy && !rx) begin
+                // start bit detected
+                busy     <= 1;
+                baud_cnt <= BAUD_DIV/2;
+                bit_idx  <= 0;
+            end else if (busy) begin
+                if (baud_cnt == BAUD_DIV-1) begin
+                    baud_cnt <= 0;
+                    if (bit_idx < 8) begin
+                        shift_reg[bit_idx] <= rx;
+                        bit_idx <= bit_idx + 1;
+                    end else begin
+                        rx_data  <= shift_reg;
+                        rx_ready <= 1;
+                        busy     <= 0;
                     end
-                    S_START: begin
-                        sample_cnt <= sample_cnt + 1'b1;
-                        if (sample_cnt == (OVERSAMPLE/2 - 1)) begin
-                            // Mid of start bit
-                            if (~rx_sync2) begin
-                                state <= S_DATA;
-                                sample_cnt <= 4'd0;
-                                bit_idx <= 3'd0;
-                            end else begin
-                                // False start, go back idle
-                                state <= S_IDLE;
-                            end
-                        end
-                    end
-                    S_DATA: begin
-                        sample_cnt <= sample_cnt + 1'b1;
-                        if (sample_cnt == OVERSAMPLE-1) begin
-                            sample_cnt <= 4'd0;
-                            // Sample in the middle of the bit (since we reset at end of previous)
-                            shifter <= {rx_sync2, shifter[7:1]}; // LSB first
-                            if (bit_idx == 3'd7) begin
-                                state <= S_STOP;
-                            end
-                            bit_idx <= bit_idx + 1'b1;
-                        end
-                    end
-                    S_STOP: begin
-                        sample_cnt <= sample_cnt + 1'b1;
-                        if (sample_cnt == OVERSAMPLE-1) begin
-                            // Stop bit should be high
-                            if (rx_sync2) begin
-                                data_out <= shifter;
-                                data_valid <= 1'b1;
-                            end else begin
-                                framing_err <= 1'b1;
-                            end
-                            state <= S_IDLE;
-                        end
-                    end
-                endcase
+                end else begin
+                    baud_cnt <= baud_cnt + 1;
+                end
             end
         end
     end

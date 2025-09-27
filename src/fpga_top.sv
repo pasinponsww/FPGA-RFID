@@ -1,157 +1,86 @@
-// fpga_top.v  (Verilog-2001 compatible)
-// UART with simple packet protocol + auth LUT reply
-// Packets: [TYPE][LEN][PAYLOAD...][CHK], CHK = ~(xor of previous bytes)
-// TYPE 0x10 (LEN=4) = UID MSB..LSB  (ESP32 → FPGA)
-// Reply: TYPE 0x21, LEN=1, payload=0x01 allow / 0x00 deny (FPGA → ESP32)
+// fpga_top.v
+// -----------------------------------------------------------------------------
+// Top-level: Handles commands from ESP32, checks/updates UID LUT, 
+// and sends back a 1-byte reply.
+// -----------------------------------------------------------------------------
 
-`timescale 1ns/1ps
-
-module fpga_top
-#(
-    parameter integer CLK_FREQ_HZ = 50000000, // FPGA clock frequency
-    parameter integer BAUD        = 115200    // UART baud rate
-)
-(
-    input  wire clk,
-    input  wire rst,
-    input  wire uart_rx,
-    output wire uart_tx
+module fpga_top (
+    input  wire clk,        // system clock
+    input  wire rst_n,      // active-low reset
+    input  wire uart_rx,    // UART RX from ESP32
+    output wire uart_tx     // UART TX to ESP32
 );
 
+    // Command bytes
+    localparam CMD_CHECK_UID = 8'hA1;
+    localparam CMD_ADD_UID   = 8'hB2;
 
-    // Baud generator
-    wire tick_x16, tick_bit;
+    // Internal signals
+    wire [7:0] rx_data;
+    wire       rx_ready;
+    reg  [7:0] reply_byte;
+    reg        reply_send;
 
-    uart_baud_gen #(
-        .CLK_FREQ_HZ(CLK_FREQ_HZ),
-        .BAUD(BAUD),
-        .OVERSAMPLE(16)
-    ) baud_i (
+    // UART RX
+    uart_rx u_rx (
         .clk(clk),
-        .rst(rst),
-        .tick_x16(tick_x16), // 16× baud for RX oversampling
-        .tick_bit(tick_bit)  // 1× baud for TX
-    );
-
-    // UART RX/TX
-    // Receiver
-    wire [7:0] rxd;       // received byte
-    wire       rxv;       // data-valid strobe (1 cycle)
-    wire       frame_err; // framing error (unused here)
-
-    uart_rx #(.OVERSAMPLE(16)) urx_i (
-        .clk(clk),
-        .rst(rst),
+        .rst_n(rst_n),
         .rx(uart_rx),
-        .tick_x16(tick_x16),
-        .data_out(rxd),
-        .data_valid(rxv),
-        .framing_err(frame_err)
+        .rx_data(rx_data),
+        .rx_ready(rx_ready)
     );
 
-    // Transmitter
-    wire [7:0] txd;    // byte to send
-    wire       tx_stb; // strobe to send byte
-    wire       tx_busy;
-
-    uart_tx utx_i (
+    // UART TX
+    wire tx_busy;
+    uart_tx u_tx (
         .clk(clk),
-        .rst(rst),
-        .data_in(txd),
-        .data_strobe(tx_stb),
-        .tick_bit(tick_bit),
+        .rst_n(rst_n),
+        .tx_start(reply_send),
+        .tx_data(reply_byte),
         .tx(uart_tx),
-        .busy(tx_busy)
+        .tx_busy(tx_busy)
     );
 
-    // Protocol RX (type/len/payload)
-    wire [7:0] pkt_type;  // packet type
-    wire [7:0] pkt_len;   // payload length
-    wire       pkt_ready; // full packet received
-    wire       pkt_bad;   // checksum/format error
+    // UID LUT
+    wire uid_allowed;
+    wire uid_added_ok;
+    wire uid_duplicate;
+    wire uid_full;
 
-    // Packed payload bus from proto_rx (32 bytes max = 256 bits)
-    wire [8*32-1:0] payload_bus;
-
-    proto_rx #(.MAX_LEN(32)) prx_i (
+    auth_lut u_lut (
         .clk(clk),
-        .rst(rst),
-        .rx_data(rxd),
-        .rx_valid(rxv),
-        .pkt_type(pkt_type),
-        .pkt_len(pkt_len),
-        .pkt_ready(pkt_ready),
-        .pkt_bad(pkt_bad),
-        .payload_bus(payload_bus)
+        .rst_n(rst_n),
+        .cmd(rx_data),
+        .valid(rx_ready),
+        .uid_allowed(uid_allowed),
+        .uid_added_ok(uid_added_ok),
+        .uid_duplicate(uid_duplicate),
+        .uid_full(uid_full)
     );
 
-    // Authentication logic
-    localparam [7:0] TYPE_UID  = 8'h10;
-    localparam [7:0] TYPE_AUTH = 8'h21;
-
-    reg  [31:0] uid_reg;
-    wire        allowed;
-
-    auth_lut #(
-        .UID0(32'hDEADBEEF),
-        .UID1(32'hA1B2C3D4),
-        .UID2(32'hCAFEBABE),
-        .UID3(32'h00000000)
-    ) auth_i (
-        .uid(uid_reg),
-        .allowed(allowed)
-    );
-
-
-    // TX Frame builder (packed bus)
-    reg        tx_start;            // 1-cycle start pulse
-    reg  [7:0] tx_type;
-    reg  [7:0] tx_len;
-    reg  [8*32-1:0] tx_payload_bus; // only byte 0 used
-
-    tx_frame #(.MAX_LEN(32)) tfrm_i (
-        .clk(clk),
-        .rst(rst),
-        .start(tx_start),
-        .type_byte(tx_type),
-        .len_byte(tx_len),
-        .payload_bus(tx_payload_bus),
-        .tx_busy(tx_busy),
-        .tx_data(txd),
-        .tx_strobe(tx_stb),
-        .busy()
-    );
-
-    // Control FSM: RX UID → check → TX AUTH result
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            uid_reg   <= 32'd0;
-            tx_start  <= 1'b0;
-            tx_type   <= 8'd0;
-            tx_len    <= 8'd0;
-            // clear TX payload byte 0 (bits 255:248)
-            tx_payload_bus[8*32-1:8*31] <= 8'd0;
+    // Reply logic
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            reply_byte <= 8'h00;
+            reply_send <= 1'b0;
         end else begin
-            tx_start <= 1'b0; // one-cycle pulse when sending
-
-            if (pkt_ready && (pkt_type == TYPE_UID) && (pkt_len == 8'd4) && !tx_busy) begin
-                // UID bytes MSB..LSB from packed payload bus (MSB-first packing)
-                uid_reg <= {
-                    payload_bus[8*32-1:8*31], // byte 0 (MSB)   bits 255:248
-                    payload_bus[8*31-1:8*30], // byte 1         bits 247:240
-                    payload_bus[8*30-1:8*29], // byte 2         bits 239:232
-                    payload_bus[8*29-1:8*28]  // byte 3 (LSB)   bits 231:224
-                };
-
-                // Build AUTH result frame
-                tx_type <= TYPE_AUTH;
-                tx_len  <= 8'd1;
-
-                // Put allow/deny into TX payload byte 0 (bits 255:248)
-                tx_payload_bus[8*32-1:8*31] <= (allowed ? 8'h01 : 8'h00);
-
-                // Kick off TX frame
-                tx_start <= 1'b1;
+            reply_send <= 1'b0; // default
+            if (rx_ready && !tx_busy) begin
+                case (rx_data)
+                    CMD_CHECK_UID: begin
+                        reply_byte <= (uid_allowed) ? 8'h01 : 8'h00;
+                        reply_send <= 1'b1;
+                    end
+                    CMD_ADD_UID: begin
+                        if (uid_added_ok)
+                            reply_byte <= 8'h02;  // added
+                        else if (uid_duplicate)
+                            reply_byte <= 8'hEE;  // duplicate
+                        else if (uid_full)
+                            reply_byte <= 8'hEF;  // full/error
+                        reply_send <= 1'b1;
+                    end
+                endcase
             end
         end
     end

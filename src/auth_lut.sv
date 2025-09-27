@@ -1,17 +1,23 @@
 // auth_lut.v
-// Combinational "allow list" for 32-bit UIDs. Parameterize the list below.
-`timescale 1ns/1ps
-module auth_lut #(
-    parameter [31:0] UID0 = 32'hDEADBEEF,
-    parameter [31:0] UID1 = 32'h12345678,
-    parameter [31:0] UID2 = 32'h00000000,
-    parameter [31:0] UID3 = 32'h00000000
-)(
-    input  wire [31:0] uid,
-    output wire        allowed
+// -----------------------------------------------------------------------------
+// Dummy UID LUT: always allow one UID, can extend for multiple.
+// -----------------------------------------------------------------------------
+
+module auth_lut (
+    input  wire clk,
+    input  wire rst_n,
+    input  wire [7:0] cmd,
+    input  wire valid,
+    output wire uid_allowed,
+    output wire uid_added_ok,
+    output wire uid_duplicate,
+    output wire uid_full
 );
-    assign allowed = (uid == UID0) |
-                     (uid == UID1) |
-                     (uid == UID2) |
-                     (uid == UID3);
+
+    // for now: always return "allowed" and "added_ok"
+    assign uid_allowed   = 1'b1;
+    assign uid_added_ok  = 1'b1;
+    assign uid_duplicate = 1'b0;
+    assign uid_full      = 1'b0;
+
 endmodule

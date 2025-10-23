@@ -1,52 +1,89 @@
-// uart_rx.v
-// -----------------------------------------------------------------------------
-// Simple UART receiver (8N1).
-// -----------------------------------------------------------------------------
-
-module uart_rx (
-    input  wire       clk,
-    input  wire       rst_n,
-    input  wire       rx,
-    output reg [7:0]  rx_data,
-    output reg        rx_ready
+`timescale 1ns/1ps
+// UART Receiver, 8N1, LSB-first
+module uart_rx
+#( parameter CLKS_PER_BIT = 87 )
+(
+  input        i_Clock,
+  input        i_Rx_Serial,
+  output reg   o_Rx_DV = 1'b0,
+  output reg [7:0] o_Rx_Byte = 8'h00
 );
 
-    parameter BAUD_DIV = 5208; // for 9600 baud @ 50 MHz
+  localparam s_IDLE         = 3'd0;
+  localparam s_RX_START_BIT = 3'd1;
+  localparam s_RX_DATA_BITS = 3'd2;
+  localparam s_RX_STOP_BIT  = 3'd3;
+  localparam s_CLEANUP      = 3'd4;
 
-    reg [12:0] baud_cnt;
-    reg [3:0]  bit_idx;
-    reg [7:0]  shift_reg;
-    reg        busy;
+  reg r_Rx_Data_R = 1'b1;
+  reg r_Rx_Data   = 1'b1;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            baud_cnt <= 0;
-            bit_idx  <= 0;
-            busy     <= 0;
-            rx_ready <= 0;
-            rx_data  <= 0;
+  reg [15:0] r_Clock_Count = 16'd0;
+  reg [2:0]  r_Bit_Index   = 3'd0; // 8 bits
+  reg [2:0]  r_SM_Main     = s_IDLE;
+
+  // Double-flop to avoid metastability
+  always @(posedge i_Clock) begin
+    r_Rx_Data_R <= i_Rx_Serial;
+    r_Rx_Data   <= r_Rx_Data_R;
+  end
+
+  always @(posedge i_Clock) begin
+    case (r_SM_Main)
+      s_IDLE: begin
+        o_Rx_DV       <= 1'b0;
+        r_Clock_Count <= 0;
+        r_Bit_Index   <= 0;
+
+        if (r_Rx_Data == 1'b0) // start bit
+          r_SM_Main <= s_RX_START_BIT;
+      end
+
+      // sample middle of start bit
+      s_RX_START_BIT: begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)/2) begin
+          if (r_Rx_Data == 1'b0) begin
+            r_Clock_Count <= 0;
+            r_SM_Main     <= s_RX_DATA_BITS;
+          end else begin
+            r_SM_Main <= s_IDLE; // false start
+          end
         end else begin
-            rx_ready <= 0;
-            if (!busy && !rx) begin
-                // start bit detected
-                busy     <= 1;
-                baud_cnt <= BAUD_DIV/2;
-                bit_idx  <= 0;
-            end else if (busy) begin
-                if (baud_cnt == BAUD_DIV-1) begin
-                    baud_cnt <= 0;
-                    if (bit_idx < 8) begin
-                        shift_reg[bit_idx] <= rx;
-                        bit_idx <= bit_idx + 1;
-                    end else begin
-                        rx_data  <= shift_reg;
-                        rx_ready <= 1;
-                        busy     <= 0;
-                    end
-                end else begin
-                    baud_cnt <= baud_cnt + 1;
-                end
-            end
+          r_Clock_Count <= r_Clock_Count + 1;
         end
-    end
+      end
+
+      s_RX_DATA_BITS: begin
+        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+          r_Clock_Count            <= 0;
+          o_Rx_Byte[r_Bit_Index]   <= r_Rx_Data; // LSB first
+          if (r_Bit_Index < 3'd7) begin
+            r_Bit_Index <= r_Bit_Index + 1;
+          end else begin
+            r_Bit_Index <= 0;
+            r_SM_Main   <= s_RX_STOP_BIT;
+          end
+        end else begin
+          r_Clock_Count <= r_Clock_Count + 1;
+        end
+      end
+
+      s_RX_STOP_BIT: begin
+        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+          o_Rx_DV       <= 1'b1;   // one-cycle data valid
+          r_Clock_Count <= 0;
+          r_SM_Main     <= s_CLEANUP;
+        end else begin
+          r_Clock_Count <= r_Clock_Count + 1;
+        end
+      end
+
+      s_CLEANUP: begin
+        r_SM_Main <= s_IDLE;
+        o_Rx_DV   <= 1'b0;
+      end
+
+      default: r_SM_Main <= s_IDLE;
+    endcase
+  end
 endmodule

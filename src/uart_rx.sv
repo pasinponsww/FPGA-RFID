@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // UART Receiver, 8N1, LSB-first
 module uart_rx
-#( parameter CLKS_PER_BIT = 87 )
+#( parameter CLKS_PER_BIT = 234 )
 (
   input        i_Clock,
   input        i_Rx_Serial,
@@ -19,10 +19,9 @@ module uart_rx
   reg r_Rx_Data   = 1'b1;
 
   reg [15:0] r_Clock_Count = 16'd0;
-  reg [2:0]  r_Bit_Index   = 3'd0; // 8 bits
+  reg [2:0]  r_Bit_Index   = 3'd0;
   reg [2:0]  r_SM_Main     = s_IDLE;
 
-  // Double-flop to avoid metastability
   always @(posedge i_Clock) begin
     r_Rx_Data_R <= i_Rx_Serial;
     r_Rx_Data   <= r_Rx_Data_R;
@@ -34,48 +33,42 @@ module uart_rx
         o_Rx_DV       <= 1'b0;
         r_Clock_Count <= 0;
         r_Bit_Index   <= 0;
-
-        if (r_Rx_Data == 1'b0) // start bit
+        if (r_Rx_Data == 1'b0)
           r_SM_Main <= s_RX_START_BIT;
       end
 
-      // sample middle of start bit
       s_RX_START_BIT: begin
         if (r_Clock_Count == (CLKS_PER_BIT-1)/2) begin
           if (r_Rx_Data == 1'b0) begin
             r_Clock_Count <= 0;
             r_SM_Main     <= s_RX_DATA_BITS;
-          end else begin
-            r_SM_Main <= s_IDLE; // false start
-          end
-        end else begin
+          end else
+            r_SM_Main <= s_IDLE;
+        end else
           r_Clock_Count <= r_Clock_Count + 1;
-        end
       end
 
       s_RX_DATA_BITS: begin
         if (r_Clock_Count == CLKS_PER_BIT-1) begin
-          r_Clock_Count            <= 0;
-          o_Rx_Byte[r_Bit_Index]   <= r_Rx_Data; // LSB first
-          if (r_Bit_Index < 3'd7) begin
+          r_Clock_Count          <= 0;
+          o_Rx_Byte[r_Bit_Index] <= r_Rx_Data;
+          if (r_Bit_Index < 3'd7)
             r_Bit_Index <= r_Bit_Index + 1;
-          end else begin
+          else begin
             r_Bit_Index <= 0;
             r_SM_Main   <= s_RX_STOP_BIT;
           end
-        end else begin
+        end else
           r_Clock_Count <= r_Clock_Count + 1;
-        end
       end
 
       s_RX_STOP_BIT: begin
         if (r_Clock_Count == CLKS_PER_BIT-1) begin
-          o_Rx_DV       <= 1'b1;   // one-cycle data valid
+          o_Rx_DV       <= 1'b1;
           r_Clock_Count <= 0;
           r_SM_Main     <= s_CLEANUP;
-        end else begin
+        end else
           r_Clock_Count <= r_Clock_Count + 1;
-        end
       end
 
       s_CLEANUP: begin

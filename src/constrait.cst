@@ -1,4 +1,18 @@
-IO_LOC "uart_rx" 68;
-IO_LOC "uart_tx" 69;
-IO_LOC "clk"    20;
-IO_LOC "rst_n"  21;
+// Tang Nano 9K UART test
+// Connects to onboard CH340 USB-UART and 27 MHz oscillator
+
+// UART RX (FPGA input from CH340 TX)
+IO_LOC  "uart_rx" 35;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33;
+
+// UART TX (FPGA output to CH340 RX)
+IO_LOC  "uart_tx" 40;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33;
+
+// Onboard 27 MHz clock
+IO_LOC  "clk" 52;
+IO_PORT "clk" PULL_MODE=UP;
+
+// Reset Pin 
+IO_LOC "rst_n" 25;
+IO_PORT "rst_n" IO_TYPE=LVCMOS33;

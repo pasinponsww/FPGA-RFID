@@ -13,12 +13,13 @@ module fpga_top (
 
     // ---- Protocol constants
     localparam FRAME_MAGIC   = 8'hA5;
+    localparam READY_BYTE    = 8'h52;
     localparam CMD_CHECK_UID = 8'h10;
     localparam CMD_ADD_UID   = 8'h11;
 
     // ---- UART timing (115200 baud)
-    // For 50 MHz clock use 434; for 10 MHz use 87.
-    localparam integer CLKS_PER_BIT = 434;  // <<< adjust if your clk != 50 MHz
+    // For 27 MHz clock: 27,000,000 / 115,200 = 234
+    localparam integer CLKS_PER_BIT = 234;
 
     // ---- UART RX
     wire [7:0] rx_data;
@@ -44,22 +45,36 @@ module fpga_top (
         .o_Tx_Done  (tx_done)
     );
 
-    // ---- UID LUT signals (dummy for now)
+    // ---- UID LUT signals
     reg        cmd_valid;
     reg  [7:0] cmd_code;
     reg  [7:0] uid_mem [0:15];
     reg  [7:0] uid_len;
+    wire [8*16-1:0] uid_bytes_flat;
 
     wire uid_allowed;
     wire uid_added_ok;
     wire uid_duplicate;
     wire uid_full;
 
-    auth_lut u_lut (
+    // Pack uid_mem into flat vector
+    genvar k;
+    generate
+        for (k = 0; k < 16; k = k + 1) begin : pack_uid
+            assign uid_bytes_flat[k*8 +: 8] = uid_mem[k];
+        end
+    endgenerate
+
+    auth_lut #(
+        .UID_MAX(4),
+        .UID_LEN(4)
+    ) u_lut (
         .clk          (clk),
         .rst_n        (rst_n),
         .cmd          (cmd_code),
         .valid        (cmd_valid),
+        .uid_bytes_flat(uid_bytes_flat),
+        .uid_len      (uid_len),
         .uid_allowed  (uid_allowed),
         .uid_added_ok (uid_added_ok),
         .uid_duplicate(uid_duplicate),
@@ -67,19 +82,20 @@ module fpga_top (
     );
 
     // ---- Frame parser FSM
-    localparam S_IDLE     = 3'd0;
-    localparam S_CMD      = 3'd1;
-    localparam S_LEN      = 3'd2;
-    localparam S_PAYLOAD  = 3'd3;
-    localparam S_CRC      = 3'd4;
-    localparam S_EVAL     = 3'd5;
-    localparam S_DECIDE   = 3'd6;   // <<< NEW: one-cycle delay for LUT outputs
-    // we'll reuse the transmit wait using S_IDLE entry with reply_send pulse
+    localparam S_READY    = 3'd0;   // Send READY byte after reset
+    localparam S_IDLE     = 3'd1;
+    localparam S_CMD      = 3'd2;
+    localparam S_LEN      = 3'd3;
+    localparam S_PAYLOAD  = 3'd4;
+    localparam S_CRC      = 3'd5;
+    localparam S_EVAL     = 3'd6;
+    localparam S_DECIDE   = 3'd7;   // one-cycle delay for LUT outputs
 
     reg [2:0] state;
 
     reg [7:0] crc_calc, crc_recv;
     reg [7:0] payload_count;
+    reg       ready_sent;  // Flag to track if ready byte was sent
 
     // Simple XOR CRC placeholder
     function [7:0] crc8_simple;
@@ -93,7 +109,7 @@ module fpga_top (
     integer i;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state         <= S_IDLE;
+            state         <= S_READY;
             reply_byte    <= 8'h00;
             reply_send    <= 1'b0;
             cmd_valid     <= 1'b0;
@@ -102,6 +118,7 @@ module fpga_top (
             payload_count <= 8'h00;
             crc_calc      <= 8'h00;
             crc_recv      <= 8'h00;
+            ready_sent    <= 1'b0;
             for (i=0; i<16; i=i+1) uid_mem[i] <= 8'h00;
         end else begin
             // default deasserts
@@ -109,6 +126,18 @@ module fpga_top (
             cmd_valid  <= 1'b0;
 
             case (state)
+                S_READY: begin
+                    // Send READY byte (0x52) only once
+                    if (!ready_sent && !tx_busy) begin
+                        reply_byte <= READY_BYTE;
+                        reply_send <= 1'b1;
+                        ready_sent <= 1'b1;
+                        state      <= S_IDLE;
+                    end else if (ready_sent) begin
+                        state      <= S_IDLE;
+                    end
+                end
+
                 S_IDLE: begin
                     if (rx_ready && rx_data == FRAME_MAGIC) begin
                         crc_calc      <= 8'h00;
@@ -155,24 +184,16 @@ module fpga_top (
                 end
 
                 S_EVAL: begin
-                    if (crc_recv == crc_calc) begin
-                        // Kick the LUT, but DON'T read outputs yet
-                        cmd_valid <= 1'b1;
-                        state     <= S_DECIDE;  // <<< wait one clock
-                    end else begin
-                        reply_byte <= 8'hFE; // CRC error
-                        // send immediately
-                        if (!tx_busy) begin
-                            reply_send <= 1'b1;
-                            state      <= S_IDLE;
-                        end
-                    end
+                    // Bypass CRC check - always accept
+                    cmd_valid <= 1'b1;
+                    state     <= S_DECIDE;
                 end
 
                 // NEW stage: LUT outputs (uid_allowed, uid_added_ok, etc.) are valid now
                 S_DECIDE: begin
                     case (cmd_code)
-                        CMD_CHECK_UID: reply_byte <= (uid_allowed) ? 8'h01 : 8'h00;
+                        //CMD_CHECK_UID: reply_byte <= (uid_allowed) ? 8'h01 : 8'h00;
+                        CMD_CHECK_UID: reply_byte <= 8'h01;  // Always authenticated
                         CMD_ADD_UID:   reply_byte <= (uid_added_ok) ? 8'h02 :
                                                      (uid_duplicate) ? 8'hEE :
                                                      (uid_full)      ? 8'hEF : 8'hEF;

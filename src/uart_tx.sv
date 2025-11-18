@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // UART Transmitter, 8N1, LSB-first
 module uart_tx
-#( parameter CLKS_PER_BIT = 87 )
+#( parameter CLKS_PER_BIT = 234 )
 (
   input        i_Clock,
   input        i_Tx_DV,           // strobe: load i_Tx_Byte and start
@@ -29,8 +29,8 @@ module uart_tx
       s_IDLE: begin
         o_Tx_Serial  <= 1'b1;
         o_Tx_Active  <= 1'b0;
-        r_Clock_Count<= 0;
-        r_Bit_Index  <= 0;
+        r_Clock_Count<= 16'd0;
+        r_Bit_Index  <= 3'd0;
 
         if (i_Tx_DV) begin
           r_Tx_Data  <= i_Tx_Byte;
@@ -42,38 +42,35 @@ module uart_tx
       s_TX_START_BIT: begin
         o_Tx_Serial <= 1'b0; // start bit
         if (r_Clock_Count == CLKS_PER_BIT-1) begin
-          r_Clock_Count <= 0;
+          r_Clock_Count <= 16'd0;
           r_SM_Main     <= s_TX_DATA_BITS;
-        end else begin
-          r_Clock_Count <= r_Clock_Count + 1;
-        end
+        end else
+          r_Clock_Count <= r_Clock_Count + 16'd1;
       end
 
       s_TX_DATA_BITS: begin
         o_Tx_Serial <= r_Tx_Data[r_Bit_Index];
         if (r_Clock_Count == CLKS_PER_BIT-1) begin
-          r_Clock_Count <= 0;
-          if (r_Bit_Index < 3'd7) begin
-            r_Bit_Index <= r_Bit_Index + 1;
-          end else begin
-            r_Bit_Index <= 0;
+          r_Clock_Count <= 16'd0;
+          if (r_Bit_Index < 3'd7)
+            r_Bit_Index <= r_Bit_Index + 3'd1;
+          else begin
+            r_Bit_Index <= 3'd0;
             r_SM_Main   <= s_TX_STOP_BIT;
           end
-        end else begin
-          r_Clock_Count <= r_Clock_Count + 1;
-        end
+        end else
+          r_Clock_Count <= r_Clock_Count + 16'd1;
       end
 
       s_TX_STOP_BIT: begin
         o_Tx_Serial <= 1'b1; // stop bit
         if (r_Clock_Count == CLKS_PER_BIT-1) begin
-          r_Clock_Count <= 0;
+          r_Clock_Count <= 16'd0;
           o_Tx_Done     <= 1'b1;
           o_Tx_Active   <= 1'b0;
           r_SM_Main     <= s_CLEANUP;
-        end else begin
-          r_Clock_Count <= r_Clock_Count + 1;
-        end
+        end else
+          r_Clock_Count <= r_Clock_Count + 16'd1;
       end
 
       s_CLEANUP: begin

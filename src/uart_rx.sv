@@ -24,6 +24,22 @@ module uart_rx
 
   always @(posedge i_Clock) begin
     r_Rx_Data_R <= i_Rx_Serial;
+  /*
+   * UART Receiver (uart_rx)
+   * ----------------------
+   * 8N1, LSB-first UART receiver module.
+   *
+   * Parameters:
+   *   CLKS_PER_BIT: Number of clock cycles per UART bit (baud rate control)
+   *
+   * Inputs:
+   *   i_Clock    : System clock
+   *   i_Rx_Serial: UART RX line
+   *
+   * Outputs:
+   *   o_Rx_DV    : Data valid pulse (1 cycle)
+   *   o_Rx_Byte  : Received byte
+   */
     r_Rx_Data   <= r_Rx_Data_R;
   end
 
@@ -38,7 +54,7 @@ module uart_rx
       end
 
       s_RX_START_BIT: begin
-        if (r_Clock_Count == (CLKS_PER_BIT-1)/2) begin
+        if (r_Clock_Count == ((CLKS_PER_BIT-1)/2)[15:0]) begin
           if (r_Rx_Data == 1'b0) begin
             r_Clock_Count <= 0;
             r_SM_Main     <= s_RX_DATA_BITS;
@@ -49,7 +65,7 @@ module uart_rx
       end
 
       s_RX_DATA_BITS: begin
-        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
           r_Clock_Count          <= 0;
           o_Rx_Byte[r_Bit_Index] <= r_Rx_Data;
           if (r_Bit_Index < 3'd7)
@@ -63,7 +79,7 @@ module uart_rx
       end
 
       s_RX_STOP_BIT: begin
-        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
           o_Rx_DV       <= 1'b1;
           r_Clock_Count <= 0;
           r_SM_Main     <= s_CLEANUP;

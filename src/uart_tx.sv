@@ -37,11 +37,29 @@ module uart_tx
           o_Tx_Active<= 1'b1;
           r_SM_Main  <= s_TX_START_BIT;
         end
+        /*
+         * UART Transmitter (uart_tx)
+         * -------------------------
+         * 8N1, LSB-first UART transmitter module.
+         *
+         * Parameters:
+         *   CLKS_PER_BIT: Number of clock cycles per UART bit (baud rate control)
+         *
+         * Inputs:
+         *   i_Clock   : System clock
+         *   i_Tx_DV   : Data valid strobe (start transmission)
+         *   i_Tx_Byte : Byte to transmit
+         *
+         * Outputs:
+         *   o_Tx_Active : High while transmitting
+         *   o_Tx_Serial : UART TX line (idle high)
+         *   o_Tx_Done   : Pulse high for 1 cycle when done
+         */
       end
 
       s_TX_START_BIT: begin
         o_Tx_Serial <= 1'b0; // start bit
-        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
           r_Clock_Count <= 16'd0;
           r_SM_Main     <= s_TX_DATA_BITS;
         end else
@@ -50,7 +68,7 @@ module uart_tx
 
       s_TX_DATA_BITS: begin
         o_Tx_Serial <= r_Tx_Data[r_Bit_Index];
-        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
           r_Clock_Count <= 16'd0;
           if (r_Bit_Index < 3'd7)
             r_Bit_Index <= r_Bit_Index + 3'd1;
@@ -64,7 +82,7 @@ module uart_tx
 
       s_TX_STOP_BIT: begin
         o_Tx_Serial <= 1'b1; // stop bit
-        if (r_Clock_Count == CLKS_PER_BIT-1) begin
+        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
           r_Clock_Count <= 16'd0;
           o_Tx_Done     <= 1'b1;
           o_Tx_Active   <= 1'b0;

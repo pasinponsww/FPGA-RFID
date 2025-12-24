@@ -54,32 +54,35 @@ module uart_rx
       end
 
       s_RX_START_BIT: begin
-        if (r_Clock_Count == ((CLKS_PER_BIT-1)/2)[15:0]) begin
+        if (r_Clock_Count == 16'd((CLKS_PER_BIT-1)/2)) begin
           if (r_Rx_Data == 1'b0) begin
             r_Clock_Count <= 0;
             r_SM_Main     <= s_RX_DATA_BITS;
-          end else
+          end else begin
             r_SM_Main <= s_IDLE;
-        end else
+          end
+        end else begin
           r_Clock_Count <= r_Clock_Count + 1;
+        end
       end
 
       s_RX_DATA_BITS: begin
-        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
+        if (r_Clock_Count == 16'd(CLKS_PER_BIT-1)) begin
           r_Clock_Count          <= 0;
           o_Rx_Byte[r_Bit_Index] <= r_Rx_Data;
-          if (r_Bit_Index < 3'd7)
+          if (r_Bit_Index < 3'd7) begin
             r_Bit_Index <= r_Bit_Index + 1;
-          else begin
+          end else begin
             r_Bit_Index <= 0;
             r_SM_Main   <= s_RX_STOP_BIT;
           end
-        end else
+        end else begin
           r_Clock_Count <= r_Clock_Count + 1;
+        end
       end
 
       s_RX_STOP_BIT: begin
-        if (r_Clock_Count == (CLKS_PER_BIT-1)[15:0]) begin
+        if (r_Clock_Count == 16'd(CLKS_PER_BIT-1)) begin
           o_Rx_DV       <= 1'b1;
           r_Clock_Count <= 0;
           r_SM_Main     <= s_CLEANUP;

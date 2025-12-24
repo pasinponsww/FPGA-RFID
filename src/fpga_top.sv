@@ -2,8 +2,9 @@
 
 module fpga_top #(
     parameter integer CLK_HZ            = 27000000,
-    parameter integer READY_TIMEOUT_MS   = 10,
-    parameter integer RESP_TIMEOUT_MS    = 50,
+    parameter integer BAUD_RATE         = 115200,
+    parameter integer READY_TIMEOUT_MS  = 10,
+    parameter integer RESP_TIMEOUT_MS   = 50,
     parameter [7:0]   MAGIC_BYTE        = 8'hA5,
     parameter [7:0]   READY_BYTE        = 8'h52,
     parameter [7:0]   CRC8_POLY         = 8'h07,
@@ -12,12 +13,12 @@ module fpga_top #(
 )(
     input  wire clk,
     input  wire rst_n,
-    input  wire fpga_wake,   
+    input  wire fpga_wake,
     input  wire uart_rx,
     output wire uart_tx
 );
 
-    localparam integer CLKS_PER_BIT = 234;
+    localparam integer CLKS_PER_BIT = (CLK_HZ + (BAUD_RATE/2)) / BAUD_RATE;
 
     wire [7:0] rx_data;
     wire       rx_ready;

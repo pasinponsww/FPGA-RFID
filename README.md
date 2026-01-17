@@ -40,8 +40,6 @@ FPGA-RFID/
 │   ├── uart_rx.sv         # UART receiver (8N1, LSB-first)
 │   ├── uart_tx.sv         # UART transmitter (8N1, LSB-first)
 │   ├── auth_lut.sv        # Authentication lookup table for UID validation
-│   ├── proto_rx.sv        # Protocol receiver with frame parsing
-│   └── tx_frame.sv        # Frame transmitter with CRC generation
 └── README.md              # This file
 ```
 
